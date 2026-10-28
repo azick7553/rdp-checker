@@ -190,3 +190,39 @@ def test_cleared_log_resets_cursor():
         if evs:
             break
     assert [e.event_type for e in evs] == [EventType.RDP_RECONNECT]
+
+
+# ---------------------------------------------------------------- локализованный «LOCAL»
+def test_localized_local_address_is_not_remote():
+    from core.eventlog_monitor import is_remote_address
+    for local in ("LOCAL", "ЛОКАЛЬНЫЕ", "Локальный", "LOKAL", "-", "", "127.0.0.1", "::1", "0.0.0.0", "::ffff:127.0.0.1"):
+        assert not is_remote_address(local), local
+    for remote in ("192.168.1.50", "10.0.0.7", "fe80::1%12", "2001:db8::5", "::ffff:10.1.2.3"):
+        assert is_remote_address(remote), remote
+
+
+def test_russian_lsm_local_logon_not_rdp():
+    ev = map_event(raw(LSM_CHANNEL, 21, 1, T0, User="IMON\\Khilola.Mirzoeva", SessionID=1, Address="ЛОКАЛЬНЫЕ"))
+    assert ev.event_type == EventType.LOCAL_LOGON and ev.ip == ""
+    assert map_event(raw(LSM_CHANNEL, 22, 2, T0, User="x", SessionID=1, Address="ЛОКАЛЬНЫЕ")) is None
+    assert map_event(raw(LSM_CHANNEL, 25, 3, T0, User="x", SessionID=1, Address="ЛОКАЛЬНЫЕ")) is None
+
+
+def test_storage_migrates_wrong_local_records(tmp_path):
+    from services.storage import Storage
+    path = tmp_path / "h.db"
+    st = Storage(path)
+    st._conn.execute("DELETE FROM meta")
+    bad = ConnectionEvent(T0, EventType.RDP_CONNECT, "Журнал LSM (ID 21)", Confidence.HIGH,
+                          user="IMON\\x", ip="ЛОКАЛЬНЫЕ", session_id=1, key="evt:LSM:1")
+    good = ConnectionEvent(T0, EventType.RDP_CONNECT, "Журнал LSM (ID 21)", Confidence.HIGH,
+                           user="IMON\\y", ip="10.0.0.5", session_id=2, key="evt:LSM:2")
+    st.add_event(bad)
+    st.add_event(good)
+    st._conn.commit()
+    st.close()
+    st = Storage(path)
+    rows = {r.user: r for r in st.query()}
+    assert rows["IMON\\x"].event_type == "local_logon" and rows["IMON\\x"].ip == ""
+    assert rows["IMON\\y"].event_type == "rdp_connect"
+    assert st.last_connection().user == "IMON\\y"

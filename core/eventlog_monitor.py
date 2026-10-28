@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import ctypes
+import ipaddress
 import logging
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
@@ -112,8 +113,27 @@ def _parse_system_time(value: Optional[str]) -> Optional[datetime]:
     return dt.astimezone()
 
 
-def _is_remote_address(addr: str) -> bool:
-    return (addr or "").strip().lower() not in LOCAL_ADDRESSES
+def is_remote_address(addr: str) -> bool:
+    """Удалённым считается только настоящий IP-адрес (не loopback и не 0.0.0.0).
+
+    Для локальных входов Windows пишет в поле Address слово, которое зависит от языка системы:
+    «LOCAL» в английской, «ЛОКАЛЬНЫЕ» в русской и т.д. Поэтому сравнивать со списком слов ненадёжно —
+    проверяем, что это IP.
+    """
+    a = (addr or "").strip().strip("[]")
+    if not a or a.lower() in LOCAL_ADDRESSES:
+        return False
+    a = a.split("%", 1)[0]  # fe80::1%12 — идентификатор зоны IPv6
+    try:
+        ip = ipaddress.ip_address(a)
+    except ValueError:
+        return False
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    return not (ip.is_loopback or ip.is_unspecified)
+
+
+_is_remote_address = is_remote_address
 
 
 def _user(domain: str, user: str) -> str:

@@ -96,6 +96,32 @@ class Storage:
                 pass
             self._conn.executescript(SCHEMA)
             self._conn.commit()
+        self._migrate_localized_local_logons()
+
+    def _migrate_localized_local_logons(self) -> None:
+        """Исправление записей версии 1.0.0: локальные входы из журналов с адресом «ЛОКАЛЬНЫЕ»
+        (русская Windows) ошибочно сохранялись как RDP-подключения."""
+        from core.eventlog_monitor import is_remote_address
+        with self._lock:
+            done = self._conn.execute("SELECT v FROM meta WHERE k = 'migr_local_v1'").fetchone()
+            if done:
+                return
+            rows = self._conn.execute(
+                "SELECT id, event_type, ip FROM events WHERE source LIKE 'Журнал %' AND ip IS NOT NULL AND ip != ''"
+                " AND event_type IN ('rdp_connect', 'rdp_shell_start', 'rdp_reconnect', 'rdp_disconnect')"
+            ).fetchall()
+            fixed = 0
+            for r in rows:
+                if is_remote_address(r["ip"]):
+                    continue
+                new_type = "local_logoff" if r["event_type"] == "rdp_disconnect" else "local_logon"
+                self._conn.execute(
+                    "UPDATE events SET event_type = ?, confidence = 0, ip = '',"
+                    " details = COALESCE(details, '') || ' [Исправлено: локальный вход, адрес «' || ? || '»]'"
+                    " WHERE id = ?", (new_type, r["ip"], r["id"]))
+                fixed += 1
+            self._conn.execute("INSERT OR REPLACE INTO meta (k, v) VALUES ('migr_local_v1', ?)", (str(fixed),))
+            self._conn.commit()
 
     def close(self) -> None:
         with self._lock:

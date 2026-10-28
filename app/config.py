@@ -10,7 +10,7 @@ from pathlib import Path
 
 APP_NAME = "RDP Connection Monitor"
 APP_ID = "RDPConnectionMonitor"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.1"
 
 log = logging.getLogger(__name__)
 
