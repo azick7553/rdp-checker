@@ -1,0 +1,5 @@
+-r requirements.txt
+pytest>=8
+pyinstaller>=6.6
+# только для tools/make_icons.py
+Pillow>=10

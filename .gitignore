@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv*/
+build/
+dist/
+.pytest_cache/
+preview/
+*.log
+dist-onedir/
+build-onedir/
+*.zip
+*.spec.bak
+.DS_Store
