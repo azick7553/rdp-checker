@@ -217,12 +217,35 @@ def test_storage_migrates_wrong_local_records(tmp_path):
                           user="IMON\\x", ip="ЛОКАЛЬНЫЕ", session_id=1, key="evt:LSM:1")
     good = ConnectionEvent(T0, EventType.RDP_CONNECT, "Журнал LSM (ID 21)", Confidence.HIGH,
                            user="IMON\\y", ip="10.0.0.5", session_id=2, key="evt:LSM:2")
-    st.add_event(bad)
-    st.add_event(good)
+    logoff = ConnectionEvent(T0, EventType.RDP_LOGOFF, "Журнал LSM (ID 23)", Confidence.HIGH,
+                             user="IMON\\z", ip="ЛОКАЛЬНЫЕ", session_id=1, key="evt:LSM:3")
+    disc = ConnectionEvent(T0, EventType.RDP_DISCONNECT, "Журнал LSM (ID 24)", Confidence.HIGH,
+                           user="IMON\\w", ip="ЛОКАЛЬНЫЕ", session_id=1, key="evt:LSM:4")
+    for e in (bad, good, logoff, disc):
+        st.add_event(e)
     st._conn.commit()
     st.close()
     st = Storage(path)
     rows = {r.user: r for r in st.query()}
     assert rows["IMON\\x"].event_type == "local_logon" and rows["IMON\\x"].ip == ""
     assert rows["IMON\\y"].event_type == "rdp_connect"
+    assert rows["IMON\\z"].event_type == "local_logoff" and rows["IMON\\z"].confidence == 0
+    assert rows["IMON\\w"].event_type == "rdp_state_change"
     assert st.last_connection().user == "IMON\\y"
+
+
+def test_russian_local_day_is_not_rdp_end_to_end():
+    """Реальная последовательность с ноутбука: 21/22/23/24 с адресом «ЛОКАЛЬНЫЕ» → ни одного RDP-события."""
+    u = "IMON\\Khilola.Mirzoeva"
+    seq = [
+        raw(LSM_CHANNEL, 21, 1, T0, User=u, SessionID=2, Address="ЛОКАЛЬНЫЕ"),
+        raw(LSM_CHANNEL, 22, 2, T0, User=u, SessionID=2, Address="ЛОКАЛЬНЫЕ"),
+        raw(LSM_CHANNEL, 23, 3, T0 + timedelta(minutes=9), User=u, SessionID=2),
+        raw(LSM_CHANNEL, 24, 4, T0 + timedelta(hours=8), User=u, SessionID=1, Address="ЛОКАЛЬНЫЕ"),
+    ]
+    events = [e for e in (map_event(r) for r in seq) if e]
+    Correlator().process(events)
+    rdp_types = {EventType.RDP_CONNECT, EventType.RDP_SHELL_START, EventType.RDP_LOGOFF,
+                 EventType.RDP_DISCONNECT, EventType.RDP_RECONNECT}
+    assert not [e for e in events if e.event_type in rdp_types]
+    assert not any(e.ip for e in events)
